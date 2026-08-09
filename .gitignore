@@ -40,3 +40,6 @@ next-env.d.ts
 /.sites-runtime/
 /outputs/
 /work/
+
+# obsolete local export folder after moving the app to the repository root
+/gold-framework/
