@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildGannSetup } from "../../../../lib/gann/engine";
-import { getTwelveDataSnapshot } from "../../../../lib/market-data/twelve-data";
+import { getFreeXauUsdSnapshot } from "../../../../lib/market-data/dukascopy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,18 +8,18 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const force = searchParams.get("refresh") === "1";
-  const result = await getTwelveDataSnapshot(force);
+  const result = await getFreeXauUsdSnapshot(force);
 
   if (!result.ok) {
     return NextResponse.json(
       {
-        provider: "Twelve Data",
+        provider: "Dukascopy Free Data Feed",
         status: "DATA ERROR",
         error: result.error.message,
         dataTimestamp: new Date().toISOString(),
       },
       {
-        status: result.error.code === "MISSING_API_KEY" ? 503 : 502,
+        status: 502,
         headers: {
           "Cache-Control": "no-store",
         },
@@ -53,4 +53,3 @@ export async function GET(request: Request) {
     },
   );
 }
-

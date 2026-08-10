@@ -35,7 +35,7 @@ function snapshot(overrides = {}) {
   const candles = trendingCandles();
   return {
     symbol: "XAU/USD",
-    provider: "Twelve Data",
+    provider: "Dukascopy Free Data Feed",
     currentPrice: candles.at(-1).close,
     updatedAt: "2026-01-03T12:00:00.000Z",
     marketState: "OPEN",
@@ -87,4 +87,3 @@ test("returns DATA ERROR when data is stale or unavailable", () => {
   assert.equal(result.status, "DATA ERROR");
   assert.equal(result.direction, "NONE");
 });
-

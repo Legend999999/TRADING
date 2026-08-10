@@ -364,7 +364,7 @@ function GannWorkbench({
               <div className="empty-result">
                 <span className="compass">◇</span>
                 <strong>Automatic scanner ready</strong>
-                <p>Press Auto Setup on the chart or refresh here after TWELVE_DATA_API_KEY is configured.</p>
+                <p>Press Auto Setup on the chart or refresh here to scan free spot XAU/USD OHLC candles.</p>
               </div>
             )}
 
