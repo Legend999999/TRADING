@@ -1,4 +1,5 @@
-import { getHistoricalRates } from "dukascopy-node";
+import { getHistoricalRates, getRealTimeRates } from "dukascopy-node";
+import type { RealTimeRatesConfigJsonItem } from "dukascopy-node";
 import type { Candle, MarketDataResult, MarketSnapshot, MarketTimeframe, TimeframeSeries } from "./types";
 
 const CACHE_TTL_MS = 60_000;
@@ -67,19 +68,36 @@ function normalizeCandles(values: DukascopyCandle[]): Candle[] {
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
+function mergeCandles(backfill: Candle[], latest: Candle[]) {
+  const merged = [...backfill, ...latest]
+    .reduce((map, candle) => map.set(candle.timestamp, candle), new Map<string, Candle>());
+  return Array.from(merged.values()).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+
 async function fetchFrame(timeframe: MarketTimeframe): Promise<TimeframeSeries> {
   const config = timeframeConfig[timeframe];
   const to = new Date();
   const from = new Date(Date.now() - config.lookbackDays * 24 * 60 * 60 * 1000);
-  const values = await getHistoricalRates({
+  const realTimeConfig: RealTimeRatesConfigJsonItem = {
     instrument: "xauusd",
-    dates: { from, to },
     timeframe: config.dukascopyFrame,
     format: "json",
-    ignoreFlats: true,
-  }) as DukascopyCandle[];
+  };
+  const [historicalValues, realTimeValues] = await Promise.all([
+    getHistoricalRates({
+      instrument: "xauusd",
+      dates: { from, to },
+      timeframe: config.dukascopyFrame,
+      format: "json",
+      ignoreFlats: true,
+    }) as Promise<DukascopyCandle[]>,
+    getRealTimeRates(realTimeConfig) as Promise<DukascopyCandle[]>,
+  ]);
 
-  const candles = normalizeCandles(values).slice(-160);
+  const candles = mergeCandles(
+    normalizeCandles(historicalValues),
+    normalizeCandles(realTimeValues),
+  ).slice(-160);
   if (candles.length < config.minCandles) {
     throw new Error(`Dukascopy returned insufficient ${timeframe} XAU/USD candles`);
   }
