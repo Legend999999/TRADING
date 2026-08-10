@@ -25,6 +25,23 @@ type DukascopyCandle = {
   close: number;
 };
 
+type RawDukascopyCandles = {
+  timestamp: number;
+  multiplier: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  shift: number;
+  times: number[];
+  opens: number[];
+  highs: number[];
+  lows: number[];
+  closes: number[];
+  volumes?: number[];
+  error?: string;
+};
+
 type CacheEntry = {
   expiresAt: number;
   snapshot: MarketSnapshot;
@@ -74,6 +91,95 @@ function mergeCandles(backfill: Candle[], latest: Candle[]) {
   return Array.from(merged.values()).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
+function decimalScale(multiplier: number) {
+  const text = multiplier.toString().toLowerCase();
+  if (text.includes("e-")) return Number(text.split("e-")[1]);
+  const decimals = text.split(".")[1];
+  return decimals?.length ?? 0;
+}
+
+function formatRawPrice(units: number, multiplier: number) {
+  return Number((units * multiplier).toFixed(decimalScale(multiplier)));
+}
+
+function normalizeRawCandles(data: RawDukascopyCandles): Candle[] {
+  if (data.error) throw new Error(`Dukascopy direct feed error: ${data.error}`);
+  if (!Array.isArray(data.times) || !data.times.length || !Number.isFinite(data.multiplier) || data.multiplier <= 0) {
+    return [];
+  }
+
+  let timestamp = data.timestamp;
+  let openUnits = Math.round(data.open / data.multiplier);
+  let highUnits = Math.round(data.high / data.multiplier);
+  let lowUnits = Math.round(data.low / data.multiplier);
+  let closeUnits = Math.round(data.close / data.multiplier);
+
+  return data.times.map((timeDelta, index) => {
+    timestamp += timeDelta * data.shift;
+    openUnits += data.opens[index];
+    highUnits += data.highs[index];
+    lowUnits += data.lows[index];
+    closeUnits += data.closes[index];
+    return {
+      timestamp: new Date(timestamp).toISOString(),
+      open: formatRawPrice(openUnits, data.multiplier),
+      high: formatRawPrice(highUnits, data.multiplier),
+      low: formatRawPrice(lowUnits, data.multiplier),
+      close: formatRawPrice(closeUnits, data.multiplier),
+    };
+  });
+}
+
+function bucketSize(timeframe: MarketTimeframe) {
+  if (timeframe === "5m") return 5 * 60_000;
+  if (timeframe === "15m") return 15 * 60_000;
+  if (timeframe === "30m") return 30 * 60_000;
+  if (timeframe === "1H") return 60 * 60_000;
+  if (timeframe === "4H") return 4 * 60 * 60_000;
+  return 24 * 60 * 60_000;
+}
+
+function aggregateCandles(candles: Candle[], timeframe: MarketTimeframe): Candle[] {
+  const size = bucketSize(timeframe);
+  const grouped = new Map<number, Candle[]>();
+  candles.forEach((candle) => {
+    const timestamp = new Date(candle.timestamp).getTime();
+    const bucket = Math.floor(timestamp / size) * size;
+    grouped.set(bucket, [...(grouped.get(bucket) ?? []), candle]);
+  });
+
+  return Array.from(grouped.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([bucket, items]) => ({
+      timestamp: new Date(bucket).toISOString(),
+      open: items[0].open,
+      high: Math.max(...items.map((item) => item.high)),
+      low: Math.min(...items.map((item) => item.low)),
+      close: items.at(-1)!.close,
+    }));
+}
+
+async function fetchDirectActiveCandles(timeframe: MarketTimeframe) {
+  const source = timeframe === "1H" || timeframe === "4H" ? "hour" : timeframe === "1D" ? "day" : "minute";
+  const from = Date.now() - bucketSize(timeframe) * 80;
+  const url = new URL(`https://jetta.dukascopy.com/v1/candles/${source}/XAU-USD/BID`);
+  url.searchParams.set("from", String(from));
+
+  const response = await fetch(url, {
+    cache: "no-store",
+    headers: {
+      accept: "application/json",
+      "cache-control": "no-cache",
+      pragma: "no-cache",
+      "user-agent": "GoldFramework/1.0",
+    },
+  });
+
+  if (!response.ok) return [];
+  const raw = await response.json() as RawDukascopyCandles;
+  return aggregateCandles(normalizeRawCandles(raw), timeframe);
+}
+
 async function fetchFrame(timeframe: MarketTimeframe): Promise<TimeframeSeries> {
   const config = timeframeConfig[timeframe];
   const to = new Date();
@@ -83,7 +189,7 @@ async function fetchFrame(timeframe: MarketTimeframe): Promise<TimeframeSeries> 
     timeframe: config.dukascopyFrame,
     format: "json",
   };
-  const [historicalValues, realTimeValues] = await Promise.all([
+  const [historicalValues, realTimeValues, directValues] = await Promise.all([
     getHistoricalRates({
       instrument: "xauusd",
       dates: { from, to },
@@ -92,11 +198,12 @@ async function fetchFrame(timeframe: MarketTimeframe): Promise<TimeframeSeries> 
       ignoreFlats: true,
     }) as Promise<DukascopyCandle[]>,
     getRealTimeRates(realTimeConfig) as Promise<DukascopyCandle[]>,
+    fetchDirectActiveCandles(timeframe),
   ]);
 
   const candles = mergeCandles(
     normalizeCandles(historicalValues),
-    normalizeCandles(realTimeValues),
+    mergeCandles(normalizeCandles(realTimeValues), directValues),
   ).slice(-160);
   if (candles.length < config.minCandles) {
     throw new Error(`Dukascopy returned insufficient ${timeframe} XAU/USD candles`);
