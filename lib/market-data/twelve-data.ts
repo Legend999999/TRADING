@@ -88,12 +88,14 @@ async function fetchFrame(timeframe: MarketTimeframe): Promise<TimeframeSeries> 
   url.searchParams.set("symbol", "XAU/USD");
   url.searchParams.set("interval", intervalByFrame[timeframe]);
   url.searchParams.set("outputsize", "160");
-  url.searchParams.set("apikey", API_KEY ?? "");
   url.searchParams.set("format", "JSON");
 
   const response = await fetch(url, {
     next: { revalidate: 60 },
-    headers: { accept: "application/json" },
+    headers: {
+      accept: "application/json",
+      authorization: `apikey ${API_KEY}`,
+    },
   });
 
   if (!response.ok) {
@@ -174,4 +176,3 @@ export async function getTwelveDataSnapshot(force = false): Promise<MarketDataRe
     };
   }
 }
-
