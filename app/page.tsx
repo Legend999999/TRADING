@@ -223,8 +223,8 @@ function GannWorkbench({
     return degrees.map((degree) => ({ degree, price: priceLevel(pivot, degree, direction) }));
   }, [pivot, pivotType]);
 
-  const scanMarket = useCallback(async (force = false) => {
-    setTab("setup");
+  const scanMarket = useCallback(async (force = false, focusTab: "setup" | "orochi" = "setup") => {
+    setTab(focusTab);
     setAutoStatus("SCANNING");
     setScanProgress("Scanning 5m, 15m, 30m, 1H, 4H and 1D closed candles...");
     setScanError("");
@@ -291,7 +291,7 @@ function GannWorkbench({
     if (strategyNonce <= 0) return;
     const timer = window.setTimeout(() => {
       setTab("orochi");
-      void scanMarket(true);
+      void scanMarket(true, "orochi");
     }, 0);
     return () => window.clearTimeout(timer);
   }, [scanMarket, strategyNonce]);
