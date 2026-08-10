@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const timeframes = [
   { label: "1m", value: "1" }, { label: "3m", value: "3" },
@@ -26,6 +26,57 @@ type Setup = {
   rules: string[];
 };
 
+type AutoStatus =
+  | "SCANNING"
+  | "NO SETUP"
+  | "PRICE NEAR"
+  | "PENDING CONFIRMATION"
+  | "VALID BUY SETUP"
+  | "VALID SELL SETUP"
+  | "MARKET CLOSED"
+  | "DATA ERROR";
+
+type AutoSetup = {
+  id: string;
+  status: AutoStatus;
+  direction: "BUY" | "SELL" | "NONE";
+  currentPrice: number | null;
+  dataTimestamp: string;
+  anchorPivot: { kind: "high" | "low"; price: number; timestamp: string; timeframe: string; strength: string } | null;
+  supportingTimeframes: string[];
+  entryZone: [number, number] | null;
+  stopLoss: number | null;
+  targets: [number, number, number] | null;
+  riskReward: [number, number, number] | null;
+  invalidationLevel: number | null;
+  distanceToEntry: number | null;
+  proximityState: string;
+  score: number;
+  ruleBreakdown: string[];
+  gannLevels: { degree: number; price: number }[];
+  timeCycle: { barsElapsed: number; cycleLength: number; barsToWindow: number; active: boolean } | null;
+  reasons: string[];
+  marketStructure: string;
+  atr: number | null;
+  marketOpen: boolean;
+};
+
+type AutoScanPayload = {
+  provider?: string;
+  cache?: string;
+  status?: AutoStatus;
+  error?: string;
+  market?: {
+    currentPrice: number | null;
+    updatedAt: string;
+    state: string;
+    stale: boolean;
+    timeframes: { timeframe: string; candles: number; latestClosedAt: string | null }[];
+  };
+  setup?: AutoSetup;
+  dataTimestamp?: string;
+};
+
 function priceLevel(pivot: number, degree: number, direction: 1 | -1) {
   const root = Math.sqrt(pivot);
   const moved = root + direction * (degree / 180);
@@ -34,6 +85,21 @@ function priceLevel(pivot: number, degree: number, direction: 1 | -1) {
 
 function fmt(value: number) {
   return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function statusTone(status: AutoStatus | "IDLE") {
+  if (status === "SCANNING") return "scanning";
+  if (status === "PRICE NEAR") return "near";
+  if (status === "PENDING CONFIRMATION") return "pending";
+  if (status === "VALID BUY SETUP") return "buy";
+  if (status === "VALID SELL SETUP") return "sell";
+  if (status === "DATA ERROR") return "error";
+  return "idle";
+}
+
+function shortTime(value?: string | null) {
+  if (!value) return "No data";
+  return new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value));
 }
 
 function TradingViewChart({ interval }: { interval: string }) {
@@ -88,7 +154,15 @@ function TradingViewChart({ interval }: { interval: string }) {
   );
 }
 
-function GannWorkbench({ activeFrame }: { activeFrame: string }) {
+function GannWorkbench({
+  activeFrame,
+  scanNonce,
+  onAutoResult,
+}: {
+  activeFrame: string;
+  scanNonce: number;
+  onAutoResult: (setup: AutoSetup | null, status: AutoStatus | "IDLE", summary: string) => void;
+}) {
   const [tab, setTab] = useState<"setup" | "levels" | "rules">("setup");
   const [pivotType, setPivotType] = useState<"low" | "high">("low");
   const [pivotInput, setPivotInput] = useState("");
@@ -97,6 +171,13 @@ function GannWorkbench({ activeFrame }: { activeFrame: string }) {
   const [bufferInput, setBufferInput] = useState("3");
   const [setup, setSetup] = useState<Setup | null>(null);
   const [message, setMessage] = useState("Enter a confirmed pivot and current price.");
+  const [autoSetup, setAutoSetup] = useState<AutoSetup | null>(null);
+  const [marketMeta, setMarketMeta] = useState<AutoScanPayload["market"] | null>(null);
+  const [autoStatus, setAutoStatus] = useState<AutoStatus | "IDLE">("IDLE");
+  const [scanProgress, setScanProgress] = useState("Idle");
+  const [scanError, setScanError] = useState("");
+  const [manualOpen, setManualOpen] = useState(false);
+  const lastNotificationId = useRef("");
 
   const pivot = Number(pivotInput);
   const current = Number(currentInput);
@@ -108,6 +189,76 @@ function GannWorkbench({ activeFrame }: { activeFrame: string }) {
     const direction = pivotType === "low" ? 1 : -1;
     return degrees.map((degree) => ({ degree, price: priceLevel(pivot, degree, direction) }));
   }, [pivot, pivotType]);
+
+  const scanMarket = useCallback(async (force = false) => {
+    setTab("setup");
+    setAutoStatus("SCANNING");
+    setScanProgress("Scanning 5m, 15m, 30m, 1H, 4H and 1D closed candles...");
+    setScanError("");
+    onAutoResult(null, "SCANNING", "Scanning market data");
+
+    try {
+      const response = await fetch(`/api/market/scan${force ? "?refresh=1" : ""}`, { cache: "no-store" });
+      const payload = (await response.json()) as AutoScanPayload;
+      if (!response.ok || !payload.setup) {
+        const timestamp = payload.dataTimestamp ?? new Date().toISOString();
+        const dataError: AutoSetup = {
+          id: `XAU/USD:DATA ERROR:${timestamp}`,
+          status: "DATA ERROR",
+          direction: "NONE",
+          currentPrice: null,
+          dataTimestamp: timestamp,
+          anchorPivot: null,
+          supportingTimeframes: [],
+          entryZone: null,
+          stopLoss: null,
+          targets: null,
+          riskReward: null,
+          invalidationLevel: null,
+          distanceToEntry: null,
+          proximityState: "far",
+          score: 0,
+          ruleBreakdown: [],
+          gannLevels: [],
+          timeCycle: null,
+          reasons: [payload.error ?? "Market data is unavailable."],
+          marketStructure: "MIXED",
+          atr: null,
+          marketOpen: false,
+        };
+        setAutoSetup(dataError);
+        setAutoStatus("DATA ERROR");
+        setScanError(payload.error ?? "Market data is unavailable.");
+        setScanProgress("Data unavailable");
+        onAutoResult(dataError, "DATA ERROR", "DATA ERROR");
+        return;
+      }
+
+      setAutoSetup(payload.setup);
+      setAutoStatus(payload.setup.status);
+      setMarketMeta(payload.market ?? null);
+      setScanProgress(`Updated ${shortTime(payload.market?.updatedAt ?? payload.setup.dataTimestamp)}`);
+      onAutoResult(payload.setup, payload.setup.status, `${payload.setup.status} · ${payload.setup.direction}`);
+    } catch {
+      setAutoStatus("DATA ERROR");
+      setScanError("Market scan failed before data could be validated.");
+      setScanProgress("Data unavailable");
+      onAutoResult(null, "DATA ERROR", "DATA ERROR");
+    }
+  }, [onAutoResult]);
+
+  useEffect(() => {
+    if (scanNonce <= 0) return;
+    const timer = window.setTimeout(() => void scanMarket(true), 0);
+    return () => window.clearTimeout(timer);
+  }, [scanMarket, scanNonce]);
+
+  useEffect(() => {
+    if (!autoSetup) return;
+    if (!["PRICE NEAR", "PENDING CONFIRMATION", "VALID BUY SETUP", "VALID SELL SETUP"].includes(autoSetup.status)) return;
+    if (lastNotificationId.current === autoSetup.id) return;
+    lastNotificationId.current = autoSetup.id;
+  }, [autoSetup]);
 
   const generateSetup = () => {
     if (!pivot || !current || pivot <= 0 || current <= 0) {
@@ -189,6 +340,75 @@ function GannWorkbench({ activeFrame }: { activeFrame: string }) {
           <div className="setup-pane">
             <div className="engine-note"><span>◆</span><p>Deterministic calculation from your Gann rulebooks. It does not guess direction.</p></div>
 
+            <div className="auto-status-card">
+              <div className="auto-status-head">
+                <div>
+                  <span>AUTO SETUP</span>
+                  <strong className={`auto-status-text ${statusTone(autoStatus)}`}>{autoStatus === "IDLE" ? "READY" : autoStatus}</strong>
+                </div>
+                <span className={`auto-dot ${statusTone(autoStatus)}`} />
+              </div>
+              <div className="market-data-grid">
+                <div><span>PRICE</span><strong>{autoSetup?.currentPrice ? fmt(autoSetup.currentPrice) : autoStatus === "IDLE" ? "No data" : "DATA ERROR"}</strong></div>
+                <div><span>UPDATED</span><strong>{shortTime(marketMeta?.updatedAt ?? autoSetup?.dataTimestamp)}</strong></div>
+                <div><span>MARKET</span><strong>{marketMeta?.state ?? (autoSetup?.marketOpen ? "OPEN" : "UNKNOWN")}</strong></div>
+                <div><span>SCAN</span><strong>{marketMeta?.stale ? "STALE DATA" : scanProgress}</strong></div>
+              </div>
+              {scanError && <p className="data-error">DATA ERROR: {scanError}</p>}
+              <button className="generate-button" type="button" onClick={() => void scanMarket(true)} disabled={autoStatus === "SCANNING"}>
+                {autoStatus === "SCANNING" ? "Scanning market data" : "Refresh automatic scan"} <span>→</span>
+              </button>
+            </div>
+
+            {!autoSetup && autoStatus !== "SCANNING" && (
+              <div className="empty-result">
+                <span className="compass">◇</span>
+                <strong>Automatic scanner ready</strong>
+                <p>Press Auto Setup on the chart or refresh here after TWELVE_DATA_API_KEY is configured.</p>
+              </div>
+            )}
+
+            {autoSetup && (
+              <div className="setup-result auto-result">
+                <div className="result-head">
+                  <div><span>LIVE RULE STATUS</span><strong className={autoSetup.direction === "BUY" ? "buy-text" : autoSetup.direction === "SELL" ? "sell-text" : ""}>{autoSetup.status}</strong></div>
+                  <div className="score"><strong>{autoSetup.score}</strong><span>/100</span></div>
+                </div>
+                {autoSetup.status === "DATA ERROR" ? (
+                  <p className="setup-warning">DATA ERROR. Live provider data is unavailable, so no trade setup is generated.</p>
+                ) : (
+                  <>
+                    <div className="order-grid">
+                      <div><span>DIRECTION</span><strong>{autoSetup.direction}</strong></div>
+                      <div><span>CURRENT</span><strong>{autoSetup.currentPrice ? fmt(autoSetup.currentPrice) : "DATA ERROR"}</strong></div>
+                      <div><span>ENTRY ZONE</span><strong>{autoSetup.entryZone ? `${fmt(autoSetup.entryZone[0])} - ${fmt(autoSetup.entryZone[1])}` : "NO SETUP"}</strong></div>
+                      <div><span>STOP LOSS</span><strong className="sell-text">{autoSetup.stopLoss ? fmt(autoSetup.stopLoss) : "NO SETUP"}</strong></div>
+                      {autoSetup.targets?.map((target, index) => <div key={target}><span>TP {index + 1} / RR {autoSetup.riskReward?.[index] ?? "-"}</span><strong className="buy-text">{fmt(target)}</strong></div>)}
+                      <div><span>INVALIDATION</span><strong>{autoSetup.invalidationLevel ? fmt(autoSetup.invalidationLevel) : "NO SETUP"}</strong></div>
+                      <div><span>DISTANCE</span><strong>{autoSetup.distanceToEntry != null ? fmt(autoSetup.distanceToEntry) : "NO SETUP"}</strong></div>
+                    </div>
+                    <div className="time-window">
+                      <span>TIME CYCLE</span>
+                      <strong>{autoSetup.timeCycle ? `${autoSetup.timeCycle.barsElapsed}/${autoSetup.timeCycle.cycleLength} bars` : "NO SETUP"}</strong>
+                      <p>{autoSetup.timeCycle?.active ? "Cycle window is active now" : autoSetup.timeCycle ? `Next window in ${autoSetup.timeCycle.barsToWindow} bars` : "Waiting for enough confirmed candles."}</p>
+                    </div>
+                    <div className="auto-meta">
+                      <span>ANCHOR</span>
+                      <strong>{autoSetup.anchorPivot ? `${autoSetup.anchorPivot.strength} ${autoSetup.anchorPivot.kind} ${fmt(autoSetup.anchorPivot.price)} on ${autoSetup.anchorPivot.timeframe}` : "No confirmed pivot"}</strong>
+                      <p>{autoSetup.marketStructure} structure / ATR {autoSetup.atr ? fmt(autoSetup.atr) : "n/a"} / {autoSetup.proximityState} / TFs {autoSetup.supportingTimeframes.length ? autoSetup.supportingTimeframes.join(", ") : "none"}</p>
+                    </div>
+                    <div className="compact-levels">
+                      {autoSetup.gannLevels.map((level) => <div key={level.degree}><span>{level.degree}°</span><strong>{fmt(level.price)}</strong></div>)}
+                    </div>
+                    <ul className="rule-checks">{[...autoSetup.reasons, ...autoSetup.ruleBreakdown].map((rule) => <li key={rule}><span>✓</span>{rule}</li>)}</ul>
+                    <p className="setup-warning">Rule-based planning only. Confirm structure and closing price before placing any order.</p>
+                  </>
+                )}
+              </div>
+            )}
+
+            <details className="manual-research" open={manualOpen} onToggle={(event) => setManualOpen(event.currentTarget.open)}>
+            <summary>Manual / Research calculator</summary>
             <label className="field-label">CONFIRMED PIVOT</label>
             <div className="segmented">
               <button type="button" className={pivotType === "low" ? "active buy" : ""} onClick={() => { setPivotType("low"); setSetup(null); }}>Pivot low</button>
@@ -223,6 +443,7 @@ function GannWorkbench({ activeFrame }: { activeFrame: string }) {
                 <p className="setup-warning">Planning calculation only. Confirm structure and closing price before placing any order.</p>
               </div>
             )}
+            </details>
           </div>
         )}
 
@@ -260,8 +481,26 @@ function GannWorkbench({ activeFrame }: { activeFrame: string }) {
 
 export default function Home() {
   const [interval, setIntervalValue] = useState("60");
+  const [scanNonce, setScanNonce] = useState(0);
+  const [autoStatus, setHomeAutoStatus] = useState<AutoStatus | "IDLE">("IDLE");
+  const [autoSummary, setAutoSummary] = useState("Automatic scan ready");
+  const [notice, setNotice] = useState("");
   const workspace = useRef<HTMLElement>(null);
+  const notifiedSetup = useRef("");
   const activeFrame = timeframes.find((timeframe) => timeframe.value === interval)?.label ?? "1H";
+
+  const handleAutoResult = useCallback((setup: AutoSetup | null, status: AutoStatus | "IDLE", summary: string) => {
+    setHomeAutoStatus(status);
+    setAutoSummary(summary);
+    if (!setup || !["PRICE NEAR", "PENDING CONFIRMATION", "VALID BUY SETUP", "VALID SELL SETUP"].includes(setup.status)) return;
+    if (notifiedSetup.current === setup.id) return;
+    notifiedSetup.current = setup.id;
+    const message = `${setup.status} on XAU/USD${setup.entryZone ? ` near ${fmt(setup.entryZone[0])}-${fmt(setup.entryZone[1])}` : ""}`;
+    setNotice(message);
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification("Gold Framework Auto Setup", { body: message });
+    }
+  }, []);
 
   const toggleFullscreen = async () => {
     if (!document.fullscreenElement) await workspace.current?.requestFullscreen();
@@ -282,9 +521,25 @@ export default function Home() {
           <div className="timeframe-scroll">{timeframes.map((timeframe) => <button key={timeframe.value} type="button" className={interval === timeframe.value ? "active" : ""} aria-pressed={interval === timeframe.value} onClick={() => setIntervalValue(timeframe.value)}>{timeframe.label}</button>)}</div>
           <div className="gann-live"><span>◆</span> GANN RULES ACTIVE</div>
         </div>
-        <div className="chart-card"><TradingViewChart interval={interval} /></div>
-        <GannWorkbench activeFrame={activeFrame} />
+        <div className="chart-card">
+          <button className="auto-setup-button" type="button" onClick={() => setScanNonce((value) => value + 1)} aria-label="Run automatic Gann setup scan">
+            <span className={`auto-dot ${statusTone(autoStatus)}`} />
+            <span className="gann-icon">◇</span>
+            <span>Auto Setup</span>
+            <small>{autoSummary}</small>
+          </button>
+          <TradingViewChart interval={interval} />
+        </div>
+        <GannWorkbench activeFrame={activeFrame} scanNonce={scanNonce} onAutoResult={handleAutoResult} />
       </section>
+
+      {notice && (
+        <div className="setup-toast" role="status">
+          <span className="auto-dot near" />
+          <p>{notice}</p>
+          <button type="button" aria-label="Dismiss setup alert" onClick={() => setNotice("")}>×</button>
+        </div>
+      )}
 
       <footer className="statusbar"><div><span className="status-dot" /> XAU/USD workspace</div><p>Rule-based planning only — verify every setup before trading</p></footer>
     </main>

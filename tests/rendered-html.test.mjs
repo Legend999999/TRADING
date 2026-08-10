@@ -9,7 +9,9 @@ test("keeps the Gold Framework trading UI source intact", async () => {
   assert.match(page, /OANDA:XAUUSD/);
   assert.match(page, /GANN Workbench/);
   assert.match(page, /Square 9/);
-  assert.match(page, /Calculate Gann setup/);
+  assert.match(page, /Auto Setup/);
+  assert.match(page, /TWELVE_DATA_API_KEY/);
+  assert.match(page, /Manual \/ Research calculator/);
   assert.match(page, /BUY LIMIT|SELL LIMIT/);
   assert.match(styles, /\.gann-panel/);
   assert.match(styles, /\.timeframe-bar/);
