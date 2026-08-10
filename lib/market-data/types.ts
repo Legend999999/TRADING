@@ -6,6 +6,7 @@ export type Candle = {
   high: number;
   low: number;
   close: number;
+  volume?: number;
 };
 
 export type TimeframeSeries = {
@@ -32,4 +33,3 @@ export type MarketDataError = {
 export type MarketDataResult =
   | { ok: true; snapshot: MarketSnapshot; cache: "hit" | "miss" }
   | { ok: false; error: MarketDataError };
-

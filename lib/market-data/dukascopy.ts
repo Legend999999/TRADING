@@ -23,6 +23,7 @@ type DukascopyCandle = {
   high: number;
   low: number;
   close: number;
+  volume?: number;
 };
 
 type RawDukascopyCandles = {
@@ -75,6 +76,7 @@ function normalizeCandles(values: DukascopyCandle[]): Candle[] {
       high: value.high,
       low: value.low,
       close: value.close,
+      volume: value.volume,
     }))
     .filter((candle) => (
       Number.isFinite(candle.open)
@@ -126,6 +128,7 @@ function normalizeRawCandles(data: RawDukascopyCandles): Candle[] {
       high: formatRawPrice(highUnits, data.multiplier),
       low: formatRawPrice(lowUnits, data.multiplier),
       close: formatRawPrice(closeUnits, data.multiplier),
+      volume: data.volumes?.[index],
     };
   });
 }

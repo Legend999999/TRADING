@@ -61,6 +61,33 @@ type AutoSetup = {
   marketOpen: boolean;
 };
 
+type OrochiSetup = {
+  id: string;
+  strategy: string;
+  status: "SCANNING" | "NO SETUP" | "PRICE NEAR" | "PENDING" | "VALID BUY" | "VALID SELL" | "DATA ERROR" | "MARKET CLOSED";
+  decision: "BUY" | "SELL" | "NO TRADE";
+  direction: "BUY" | "SELL" | "NONE";
+  frameworkSetup: string;
+  marketCondition: string;
+  entryType: string;
+  entryZone: [number, number] | null;
+  stopLoss: number | null;
+  targets: [number, number, number] | null;
+  riskReward: [number, number, number] | null;
+  invalidationLevel: number | null;
+  confidence: number;
+  score: number;
+  structure: string;
+  confluences: string[];
+  auctionEvidence: string[];
+  orderFlowEvidence: string[];
+  missingInformation: string[];
+  newsRisk: string;
+  dataTimestamp: string;
+  candleTimeframe: string;
+  valueArea: { vah: number; val: number; poc: number; vwap: number; upperBand: number; lowerBand: number } | null;
+};
+
 type AutoScanPayload = {
   provider?: string;
   cache?: string;
@@ -74,6 +101,9 @@ type AutoScanPayload = {
     timeframes: { timeframe: string; candles: number; latestClosedAt: string | null }[];
   };
   setup?: AutoSetup;
+  strategies?: {
+    orochi?: OrochiSetup;
+  };
   dataTimestamp?: string;
 };
 
@@ -157,13 +187,15 @@ function TradingViewChart({ interval }: { interval: string }) {
 function GannWorkbench({
   activeFrame,
   scanNonce,
+  strategyNonce,
   onAutoResult,
 }: {
   activeFrame: string;
   scanNonce: number;
+  strategyNonce: number;
   onAutoResult: (setup: AutoSetup | null, status: AutoStatus | "IDLE", summary: string) => void;
 }) {
-  const [tab, setTab] = useState<"setup" | "levels" | "rules">("setup");
+  const [tab, setTab] = useState<"setup" | "orochi" | "levels" | "rules">("setup");
   const [pivotType, setPivotType] = useState<"low" | "high">("low");
   const [pivotInput, setPivotInput] = useState("");
   const [currentInput, setCurrentInput] = useState("");
@@ -172,6 +204,7 @@ function GannWorkbench({
   const [setup, setSetup] = useState<Setup | null>(null);
   const [message, setMessage] = useState("Enter a confirmed pivot and current price.");
   const [autoSetup, setAutoSetup] = useState<AutoSetup | null>(null);
+  const [orochiSetup, setOrochiSetup] = useState<OrochiSetup | null>(null);
   const [marketMeta, setMarketMeta] = useState<AutoScanPayload["market"] | null>(null);
   const [autoStatus, setAutoStatus] = useState<AutoStatus | "IDLE">("IDLE");
   const [scanProgress, setScanProgress] = useState("Idle");
@@ -235,6 +268,7 @@ function GannWorkbench({
       }
 
       setAutoSetup(payload.setup);
+      setOrochiSetup(payload.strategies?.orochi ?? null);
       setAutoStatus(payload.setup.status);
       setMarketMeta(payload.market ?? null);
       setScanProgress(`Updated ${shortTime(payload.market?.updatedAt ?? payload.setup.dataTimestamp)}`);
@@ -252,6 +286,15 @@ function GannWorkbench({
     const timer = window.setTimeout(() => void scanMarket(true), 0);
     return () => window.clearTimeout(timer);
   }, [scanMarket, scanNonce]);
+
+  useEffect(() => {
+    if (strategyNonce <= 0) return;
+    const timer = window.setTimeout(() => {
+      setTab("orochi");
+      void scanMarket(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [scanMarket, strategyNonce]);
 
   useEffect(() => {
     if (!autoSetup) return;
@@ -328,9 +371,9 @@ function GannWorkbench({
       </div>
 
       <div className="gann-tabs" role="tablist" aria-label="Gann tools">
-        {(["setup", "levels", "rules"] as const).map((item) => (
+        {(["setup", "orochi", "levels", "rules"] as const).map((item) => (
           <button key={item} type="button" className={tab === item ? "active" : ""} onClick={() => setTab(item)}>
-            {item === "setup" ? "Setup" : item === "levels" ? "Square 9" : "Rules"}
+            {item === "setup" ? "GANN" : item === "orochi" ? "Orochi" : item === "levels" ? "Square 9" : "Rules"}
           </button>
         ))}
       </div>
@@ -447,6 +490,68 @@ function GannWorkbench({
           </div>
         )}
 
+        {tab === "orochi" && (
+          <div className="setup-pane">
+            <div className="engine-note"><span>◆</span><p>Orochi-style auction analysis uses real XAU/USD OHLC candles only. Order-flow and news confirmations are never invented.</p></div>
+
+            {!orochiSetup && (
+              <div className="empty-result">
+                <span className="compass">◇</span>
+                <strong>Strategy Center ready</strong>
+                <p>Run Auto Setup to calculate the Orochi auction framework from closed candles.</p>
+              </div>
+            )}
+
+            {orochiSetup && (
+              <div className="setup-result auto-result">
+                <div className="result-head">
+                  <div><span>{orochiSetup.strategy}</span><strong className={orochiSetup.direction === "BUY" ? "buy-text" : orochiSetup.direction === "SELL" ? "sell-text" : ""}>{orochiSetup.status}</strong></div>
+                  <div className="score"><strong>{orochiSetup.score}</strong><span>/100</span></div>
+                </div>
+                <div className="order-grid">
+                  <div><span>DECISION</span><strong>{orochiSetup.decision}</strong></div>
+                  <div><span>DIRECTION</span><strong>{orochiSetup.direction}</strong></div>
+                  <div><span>SETUP</span><strong>{orochiSetup.frameworkSetup}</strong></div>
+                  <div><span>CONDITION</span><strong>{orochiSetup.marketCondition}</strong></div>
+                  <div><span>ENTRY TYPE</span><strong>{orochiSetup.entryType}</strong></div>
+                  <div><span>TIMEFRAME</span><strong>{orochiSetup.candleTimeframe}</strong></div>
+                  <div><span>ENTRY ZONE</span><strong>{orochiSetup.entryZone ? `${fmt(orochiSetup.entryZone[0])} - ${fmt(orochiSetup.entryZone[1])}` : "NO TRADE"}</strong></div>
+                  <div><span>STOP LOSS</span><strong className="sell-text">{orochiSetup.stopLoss ? fmt(orochiSetup.stopLoss) : "NO TRADE"}</strong></div>
+                  {orochiSetup.targets?.map((target, index) => <div key={`${target}-${index}`}><span>TP {index + 1} / RR {orochiSetup.riskReward?.[index] ?? "-"}</span><strong className="buy-text">{fmt(target)}</strong></div>)}
+                  <div><span>INVALIDATION</span><strong>{orochiSetup.invalidationLevel ? fmt(orochiSetup.invalidationLevel) : "NO TRADE"}</strong></div>
+                  <div><span>CONFIDENCE</span><strong>{orochiSetup.confidence}%</strong></div>
+                </div>
+                {orochiSetup.valueArea && (
+                  <div className="compact-levels">
+                    <div><span>VAH</span><strong>{fmt(orochiSetup.valueArea.vah)}</strong></div>
+                    <div><span>VAL</span><strong>{fmt(orochiSetup.valueArea.val)}</strong></div>
+                    <div><span>POC</span><strong>{fmt(orochiSetup.valueArea.poc)}</strong></div>
+                    <div><span>VWAP</span><strong>{fmt(orochiSetup.valueArea.vwap)}</strong></div>
+                    <div><span>UPPER</span><strong>{fmt(orochiSetup.valueArea.upperBand)}</strong></div>
+                    <div><span>LOWER</span><strong>{fmt(orochiSetup.valueArea.lowerBand)}</strong></div>
+                  </div>
+                )}
+                <div className="auto-meta">
+                  <span>STRUCTURE</span>
+                  <strong>{orochiSetup.structure}</strong>
+                  <p>Updated {shortTime(orochiSetup.dataTimestamp)}</p>
+                </div>
+                <ul className="rule-checks">{[
+                  ...orochiSetup.confluences,
+                  ...orochiSetup.auctionEvidence,
+                  ...orochiSetup.orderFlowEvidence,
+                ].map((rule) => <li key={rule}><span>✓</span>{rule}</li>)}</ul>
+                <div className="data-error soft">
+                  <strong>Missing information</strong>
+                  <p>{orochiSetup.missingInformation.join(" ")}</p>
+                  <p>{orochiSetup.newsRisk}</p>
+                </div>
+                <p className="setup-warning">No automatic trades. Orochi stays NO TRADE until unavailable order-flow/news confirmations are connected.</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {tab === "levels" && (
           <div className="levels-pane">
             <p className="pane-intro">Levels use (√price ± degree/180)² from the selected pivot.</p>
@@ -482,6 +587,7 @@ function GannWorkbench({
 export default function Home() {
   const [interval, setIntervalValue] = useState("60");
   const [scanNonce, setScanNonce] = useState(0);
+  const [strategyNonce, setStrategyNonce] = useState(0);
   const [autoStatus, setHomeAutoStatus] = useState<AutoStatus | "IDLE">("IDLE");
   const [autoSummary, setAutoSummary] = useState("Automatic scan ready");
   const [notice, setNotice] = useState("");
@@ -528,9 +634,13 @@ export default function Home() {
             <span>Auto Setup</span>
             <small>{autoSummary}</small>
           </button>
+          <button className="strategy-center-button" type="button" onClick={() => setStrategyNonce((value) => value + 1)} aria-label="Open Strategy Setup Center">
+            <span className="gann-icon">◇</span>
+            <span>Strategy Setup Center</span>
+          </button>
           <TradingViewChart interval={interval} />
         </div>
-        <GannWorkbench activeFrame={activeFrame} scanNonce={scanNonce} onAutoResult={handleAutoResult} />
+        <GannWorkbench activeFrame={activeFrame} scanNonce={scanNonce} strategyNonce={strategyNonce} onAutoResult={handleAutoResult} />
       </section>
 
       {notice && (

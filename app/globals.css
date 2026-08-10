@@ -209,6 +209,26 @@ button { font: inherit; }
   cursor: pointer;
   box-shadow: 0 8px 24px rgba(0,0,0,.34);
 }
+.strategy-center-button {
+  position: absolute;
+  z-index: 5;
+  left: min(360px, 24vw);
+  top: 12px;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  border: 1px solid rgba(148,163,184,.24);
+  border-radius: 9px;
+  color: #e5e9f0;
+  background: rgba(9, 12, 16, .86);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0,0,0,.28);
+  font-size: 11px;
+  font-weight: 750;
+}
 .auto-setup-button span { font-size: 11px; font-weight: 750; }
 .auto-setup-button small {
   min-width: 0;
@@ -300,7 +320,7 @@ button { font: inherit; }
 
 .gann-tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   padding: 6px;
   border-bottom: 1px solid var(--line);
   background: #0a0d11;
@@ -442,6 +462,14 @@ button { font: inherit; }
   font-size: 9px;
   line-height: 1.45;
 }
+.data-error.soft {
+  margin: 12px;
+  color: #d9b9bf;
+  background: rgba(251,191,36,.04);
+  border-color: rgba(251,191,36,.16);
+}
+.data-error.soft strong { display: block; margin-bottom: 6px; color: #f6d28a; font-size: 10px; }
+.data-error.soft p { margin: 4px 0 0; }
 
 .empty-result { display: grid; justify-items: center; gap: 7px; padding: 30px 14px; text-align: center; }
 .empty-result.compact { padding-block: 38px; }
@@ -597,6 +625,8 @@ button { font: inherit; }
   .chart-stage { min-height: 500px; }
   .timeframe-scroll { padding-inline: 6px; }
   .timeframe-scroll button { min-width: 36px; padding-inline: 7px; }
+  .auto-setup-button { max-width: calc(100% - 14px); }
+  .strategy-center-button { top: 60px; left: 7px; max-width: calc(100% - 14px); }
   .gann-panel { min-height: 680px; }
 }
 
