@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { buildGannSetup } from "../../../../lib/gann/engine";
 import { getFreeXauUsdSnapshot } from "../../../../lib/market-data/dukascopy";
 import { buildOrochiSetup } from "../../../../lib/orochi/engine";
+import { buildUnifiedStrategy } from "../../../../lib/unified-strategy/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +31,7 @@ export async function GET(request: Request) {
 
   const setup = buildGannSetup(result.snapshot);
   const orochi = buildOrochiSetup(result.snapshot);
+  const unified = buildUnifiedStrategy(result.snapshot);
   return NextResponse.json(
     {
       provider: result.snapshot.provider,
@@ -49,6 +51,7 @@ export async function GET(request: Request) {
       setup,
       strategies: {
         orochi,
+        unified,
       },
     },
     {

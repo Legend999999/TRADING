@@ -88,6 +88,60 @@ type OrochiSetup = {
   valueArea: { vah: number; val: number; poc: number; vwap: number; upperBand: number; lowerBand: number } | null;
 };
 
+type UnifiedZone = {
+  kind: string;
+  direction?: string;
+  low: number;
+  high: number;
+  level: number;
+  strength: number;
+  touches: number;
+  timeframe: string;
+  createdAt: string;
+};
+
+type UnifiedCondition = {
+  key: string;
+  label: string;
+  state: "CONFIRMED" | "WAITING" | "MISSING" | "CONFLICT" | "OPTIONAL";
+  detail: string;
+};
+
+type UnifiedSetup = {
+  id: string;
+  strategy: "Unified Strategy";
+  status: "SCANNING" | "NO TRADE" | "PRICE NEAR" | "PENDING" | "VALID BUY" | "VALID SELL" | "DATA ERROR" | "MARKET CLOSED";
+  lifecycle: string;
+  decision: "BUY" | "SELL" | "NO TRADE";
+  direction: "BUY" | "SELL" | "NONE";
+  instruction: string;
+  htfBias: "BULLISH" | "BEARISH" | "MIXED";
+  marketStructure: string;
+  supertrend: "BULLISH" | "BEARISH" | "UNKNOWN";
+  supportZones: UnifiedZone[];
+  resistanceZones: UnifiedZone[];
+  liquidityPools: UnifiedZone[];
+  liquiditySweep: UnifiedZone | null;
+  bos: UnifiedZone | null;
+  displacement: { confirmed: boolean; candleTimestamp: string | null; rangeToAtr: number | null };
+  fvg: UnifiedZone | null;
+  retestZone: UnifiedZone | null;
+  confirmation: { confirmed: boolean; candleTimestamp: string | null; detail: string };
+  entryZone: [number, number] | null;
+  entry: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  riskReward: number | null;
+  invalidationLevel: number | null;
+  setupQuality: { confirmed: number; total: number; items: UnifiedCondition[] };
+  reasonsFor: string[];
+  reasonsAgainst: string[];
+  dataTimestamp: string;
+  candleTimeframe: string | null;
+  currentPrice: number | null;
+  atr: number | null;
+};
+
 type AutoScanPayload = {
   provider?: string;
   cache?: string;
@@ -103,6 +157,7 @@ type AutoScanPayload = {
   setup?: AutoSetup;
   strategies?: {
     orochi?: OrochiSetup;
+    unified?: UnifiedSetup;
   };
   dataTimestamp?: string;
 };
@@ -117,12 +172,12 @@ function fmt(value: number) {
   return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function statusTone(status: AutoStatus | "IDLE") {
+function statusTone(status: AutoStatus | UnifiedSetup["status"] | "IDLE") {
   if (status === "SCANNING") return "scanning";
   if (status === "PRICE NEAR") return "near";
-  if (status === "PENDING CONFIRMATION") return "pending";
-  if (status === "VALID BUY SETUP") return "buy";
-  if (status === "VALID SELL SETUP") return "sell";
+  if (status === "PENDING CONFIRMATION" || status === "PENDING") return "pending";
+  if (status === "VALID BUY SETUP" || status === "VALID BUY") return "buy";
+  if (status === "VALID SELL SETUP" || status === "VALID SELL") return "sell";
   if (status === "DATA ERROR") return "error";
   return "idle";
 }
@@ -195,7 +250,7 @@ function GannWorkbench({
   strategyNonce: number;
   onAutoResult: (setup: AutoSetup | null, status: AutoStatus | "IDLE", summary: string) => void;
 }) {
-  const [tab, setTab] = useState<"setup" | "orochi" | "levels" | "rules">("setup");
+  const [tab, setTab] = useState<"setup" | "unified" | "orochi" | "levels" | "rules">("setup");
   const [pivotType, setPivotType] = useState<"low" | "high">("low");
   const [pivotInput, setPivotInput] = useState("");
   const [currentInput, setCurrentInput] = useState("");
@@ -205,6 +260,7 @@ function GannWorkbench({
   const [message, setMessage] = useState("Enter a confirmed pivot and current price.");
   const [autoSetup, setAutoSetup] = useState<AutoSetup | null>(null);
   const [orochiSetup, setOrochiSetup] = useState<OrochiSetup | null>(null);
+  const [unifiedSetup, setUnifiedSetup] = useState<UnifiedSetup | null>(null);
   const [marketMeta, setMarketMeta] = useState<AutoScanPayload["market"] | null>(null);
   const [autoStatus, setAutoStatus] = useState<AutoStatus | "IDLE">("IDLE");
   const [scanProgress, setScanProgress] = useState("Idle");
@@ -223,7 +279,7 @@ function GannWorkbench({
     return degrees.map((degree) => ({ degree, price: priceLevel(pivot, degree, direction) }));
   }, [pivot, pivotType]);
 
-  const scanMarket = useCallback(async (force = false, focusTab: "setup" | "orochi" = "setup") => {
+  const scanMarket = useCallback(async (force = false, focusTab: "setup" | "unified" | "orochi" = "setup") => {
     setTab(focusTab);
     setAutoStatus("SCANNING");
     setScanProgress("Scanning 5m, 15m, 30m, 1H, 4H and 1D closed candles...");
@@ -269,6 +325,7 @@ function GannWorkbench({
 
       setAutoSetup(payload.setup);
       setOrochiSetup(payload.strategies?.orochi ?? null);
+      setUnifiedSetup(payload.strategies?.unified ?? null);
       setAutoStatus(payload.setup.status);
       setMarketMeta(payload.market ?? null);
       setScanProgress(`Updated ${shortTime(payload.market?.updatedAt ?? payload.setup.dataTimestamp)}`);
@@ -290,8 +347,8 @@ function GannWorkbench({
   useEffect(() => {
     if (strategyNonce <= 0) return;
     const timer = window.setTimeout(() => {
-      setTab("orochi");
-      void scanMarket(true, "orochi");
+      setTab("unified");
+      void scanMarket(true, "unified");
     }, 0);
     return () => window.clearTimeout(timer);
   }, [scanMarket, strategyNonce]);
@@ -371,9 +428,9 @@ function GannWorkbench({
       </div>
 
       <div className="gann-tabs" role="tablist" aria-label="Gann tools">
-        {(["setup", "orochi", "levels", "rules"] as const).map((item) => (
+        {(["setup", "unified", "orochi", "levels", "rules"] as const).map((item) => (
           <button key={item} type="button" className={tab === item ? "active" : ""} onClick={() => setTab(item)}>
-            {item === "setup" ? "GANN" : item === "orochi" ? "Orochi" : item === "levels" ? "Square 9" : "Rules"}
+            {item === "setup" ? "GANN" : item === "unified" ? "Unified" : item === "orochi" ? "Orochi" : item === "levels" ? "Square 9" : "Rules"}
           </button>
         ))}
       </div>
@@ -487,6 +544,78 @@ function GannWorkbench({
               </div>
             )}
             </details>
+          </div>
+        )}
+
+        {tab === "unified" && (
+          <div className="setup-pane">
+            <div className="engine-note"><span>◆</span><p>Unified Strategy follows market structure, Supertrend, location, liquidity sweep, BOS, retest and confirmation in sequence.</p></div>
+
+            {!unifiedSetup && (
+              <div className="empty-result">
+                <span className="compass">◇</span>
+                <strong>Unified Strategy ready</strong>
+                <p>Run Strategy Setup Center or Auto Setup to scan real XAU/USD OHLC candles.</p>
+              </div>
+            )}
+
+            {unifiedSetup && (
+              <div className="setup-result auto-result">
+                <div className="result-head">
+                  <div><span>UNIFIED STRATEGY</span><strong className={unifiedSetup.direction === "BUY" ? "buy-text" : unifiedSetup.direction === "SELL" ? "sell-text" : ""}>{unifiedSetup.status}</strong></div>
+                  <div className="score"><strong>{unifiedSetup.setupQuality.confirmed}</strong><span>/{unifiedSetup.setupQuality.total}</span></div>
+                </div>
+                <div className="auto-meta">
+                  <span>CURRENT INSTRUCTION</span>
+                  <strong>{unifiedSetup.instruction}</strong>
+                  <p>{unifiedSetup.lifecycle} / {unifiedSetup.candleTimeframe ?? "NO TF"} / Updated {shortTime(unifiedSetup.dataTimestamp)}</p>
+                </div>
+                <div className="order-grid">
+                  <div><span>DECISION</span><strong>{unifiedSetup.decision}</strong></div>
+                  <div><span>DIRECTION</span><strong>{unifiedSetup.direction}</strong></div>
+                  <div><span>HTF BIAS</span><strong>{unifiedSetup.htfBias}</strong></div>
+                  <div><span>STRUCTURE</span><strong>{unifiedSetup.marketStructure}</strong></div>
+                  <div><span>SUPERTREND</span><strong>{unifiedSetup.supertrend}</strong></div>
+                  <div><span>ATR</span><strong>{unifiedSetup.atr ? fmt(unifiedSetup.atr) : "DATA ERROR"}</strong></div>
+                  <div><span>ENTRY ZONE</span><strong>{unifiedSetup.entryZone ? `${fmt(unifiedSetup.entryZone[0])} - ${fmt(unifiedSetup.entryZone[1])}` : "WAITING"}</strong></div>
+                  <div><span>ENTRY</span><strong>{unifiedSetup.entry ? fmt(unifiedSetup.entry) : "WAITING"}</strong></div>
+                  <div><span>STRUCTURAL SL</span><strong className="sell-text">{unifiedSetup.stopLoss ? fmt(unifiedSetup.stopLoss) : "WAITING"}</strong></div>
+                  <div><span>TAKE PROFIT</span><strong className="buy-text">{unifiedSetup.takeProfit ? fmt(unifiedSetup.takeProfit) : "WAITING"}</strong></div>
+                  <div><span>RISK/REWARD</span><strong>{unifiedSetup.riskReward ? `1:${unifiedSetup.riskReward}` : "WAITING"}</strong></div>
+                  <div><span>INVALIDATION</span><strong>{unifiedSetup.invalidationLevel ? fmt(unifiedSetup.invalidationLevel) : "WAITING"}</strong></div>
+                </div>
+                <div className="compact-levels">
+                  <div><span>SUPPORT</span><strong>{unifiedSetup.supportZones[0] ? `${fmt(unifiedSetup.supportZones[0].low)}-${fmt(unifiedSetup.supportZones[0].high)}` : "NONE"}</strong></div>
+                  <div><span>RESISTANCE</span><strong>{unifiedSetup.resistanceZones[0] ? `${fmt(unifiedSetup.resistanceZones[0].low)}-${fmt(unifiedSetup.resistanceZones[0].high)}` : "NONE"}</strong></div>
+                  <div><span>LIQUIDITY</span><strong>{unifiedSetup.liquidityPools[0] ? fmt(unifiedSetup.liquidityPools[0].level) : "WAITING"}</strong></div>
+                  <div><span>SWEEP</span><strong>{unifiedSetup.liquiditySweep ? fmt(unifiedSetup.liquiditySweep.level) : "WAITING"}</strong></div>
+                  <div><span>BOS</span><strong>{unifiedSetup.bos ? fmt(unifiedSetup.bos.level) : "WAITING"}</strong></div>
+                  <div><span>FVG</span><strong>{unifiedSetup.fvg ? `${fmt(unifiedSetup.fvg.low)}-${fmt(unifiedSetup.fvg.high)}` : "OPTIONAL"}</strong></div>
+                </div>
+                <ul className="rule-checks">
+                  {unifiedSetup.setupQuality.items.map((item) => (
+                    <li key={item.key}>
+                      <span>{item.state === "CONFIRMED" ? "✓" : item.state === "CONFLICT" ? "!" : "·"}</span>
+                      {item.label}: {item.state} - {item.detail}
+                    </li>
+                  ))}
+                </ul>
+                {!!unifiedSetup.reasonsAgainst.length && (
+                  <div className="data-error soft">
+                    <strong>What is missing</strong>
+                    <p>{unifiedSetup.reasonsAgainst.join(" ")}</p>
+                  </div>
+                )}
+                {!!unifiedSetup.reasonsFor.length && (
+                  <div className="auto-meta">
+                    <span>CONFIRMED CONTEXT</span>
+                    <strong>{unifiedSetup.reasonsFor.slice(0, 2).join(" / ") || "No confirmed setup context yet."}</strong>
+                    <p>{unifiedSetup.reasonsFor.slice(2).join(" ")}</p>
+                  </div>
+                )}
+                <p className="setup-warning">No automatic trades. This is a deterministic confluence score, not a probability forecast.</p>
+              </div>
+            )}
           </div>
         )}
 
